@@ -1,41 +1,24 @@
-import time
-import json
-import shutil
-import hashlib
-import logging
-import os
-import platform
-import multiprocessing
+import time, json, shutil, hashlib, logging, os, platform, multiprocessing
 from pathlib import Path
 
-# ============================================================
-# CẤU HÌNH - BALANCED + HARDWARE
-# ============================================================
-
 FORCE_RESET = False
-
 ROOT_PATH = Path("/content/drive/MyDrive/NPlus_Coin")
 LOCAL_FALLBACK_PATH = Path("/content/NPlus_Coin_Local")
-
 STATUS_REPORT_INTERVAL = 30
-CHECKPOINT_LOG_INTERVAL = 20
-
 TARGET_BLOCK_TIME = 1.2
 DIFFICULTY_ADJUSTMENT_INTERVAL = 15
 MIN_DIFFICULTY = 3
 MAX_DIFFICULTY = 5
-
 MAX_RECENT_BLOCKS = 100
 
+# MINH BẠCH PHẦN CỨNG RA COIN
+HASHES_PER_NPC = 1300 # 1300 hash = 1 NPC - mày tự chỉnh được
+BASE_REWARD = 10 # thưởng cứng cho việc tìm ra block
+
 DEFAULT_CONFIG = {
-    "network": "NPlus Mainnet",
-    "chain_id": 8888,
-    "symbol": "NPC",
-    "coin_name": "NPlus Coin",
-    "difficulty": 4,
-    "initial_block_reward": 50,
-    "total_supply_cap": 1_000_000_000,
-    "miner_address": None
+    "network": "NPlus Mainnet", "chain_id": 8888, "symbol": "NPC",
+    "coin_name": "NPlus Coin", "difficulty": 4,
+    "total_supply_cap": 1_000_000_000, "miner_address": None
 }
 
 def atomic_write_json(path, data):
@@ -50,67 +33,32 @@ def read_json(path, default=None):
         if path.exists():
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
-    except Exception:
-        return default
+    except: return default
     return default
 
 def initialize_environment():
     global ROOT_PATH
     try:
         from google.colab import drive
-        drive_root = Path("/content/drive")
-        my_drive = drive_root / "MyDrive"
-        if not my_drive.exists():
+        if not (Path("/content/drive") / "MyDrive").exists():
             drive.mount("/content/drive")
-        else:
-            print("Google Drive already mounted.", flush=True)
-    except ImportError:
-        ROOT_PATH = LOCAL_FALLBACK_PATH
-    except Exception as e:
-        ROOT_PATH = LOCAL_FALLBACK_PATH
-        print(f"Drive mount failed: {e}. Using local path.", flush=True)
-
-    if FORCE_RESET and ROOT_PATH.exists():
-        shutil.rmtree(ROOT_PATH)
-
-    for folder in ["contracts", "config", "logs", "wallet", "data", "src"]:
+    except: ROOT_PATH = LOCAL_FALLBACK_PATH
+    if FORCE_RESET and ROOT_PATH.exists(): shutil.rmtree(ROOT_PATH)
+    for folder in ["contracts","config","logs","wallet","data","src"]:
         (ROOT_PATH / folder).mkdir(parents=True, exist_ok=True)
-
     log_file = ROOT_PATH / "logs" / "miner.log"
     root_logger = logging.getLogger()
-    if root_logger.handlers:
-        root_logger.handlers.clear()
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[logging.FileHandler(log_file, mode="a", encoding="utf-8"), logging.StreamHandler()]
-    )
+    if root_logger.handlers: root_logger.handlers.clear()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.FileHandler(log_file, mode="a", encoding="utf-8"), logging.StreamHandler()])
     logger = logging.getLogger("NPlusMiner")
-    # LOG PHẦN CỨNG MINH BẠCH
-    logger.info(f"Environment ready at: {ROOT_PATH}")
-    logger.info(f"HARDWARE | CPU: {platform.processor()} | Cores: {os.cpu_count()} | Machine: {platform.machine()}")
+    logger.info(f"HARDWARE MINING | CPU: {platform.processor()} | Cores: {os.cpu_count()} | {HASHES_PER_NPC} hash = 1 NPC")
     return logger
 
 def setup_project_files(logger):
     config_path = ROOT_PATH / "config" / "network.json"
     if not config_path.exists():
-        config = dict(DEFAULT_CONFIG)
-        config["miner_address"] = generate_address()
+        config = dict(DEFAULT_CONFIG); config["miner_address"] = generate_address()
         atomic_write_json(config_path, config)
-    else:
-        config = read_json(config_path, DEFAULT_CONFIG)
-        changed = False
-        for k, v in DEFAULT_CONFIG.items():
-            if k not in config:
-                config[k] = v
-                changed = True
-        if not config.get("miner_address"):
-            config["miner_address"] = generate_address()
-            changed = True
-        if changed:
-            atomic_write_json(config_path, config)
 
 def generate_address():
     seed = f"NPlusMiner_{time.time()}_{hashlib.sha256(str(time.time()).encode()).hexdigest()}"
@@ -118,245 +66,132 @@ def generate_address():
 
 class WalletManager:
     def __init__(self, wallet_path, logger, default_address):
-        self.wallet_path = wallet_path
-        self.logger = logger
-        self.default_address = default_address
+        self.wallet_path = wallet_path; self.logger = logger; self.default_address = default_address
         self.data = self._load_or_create()
     def _load_or_create(self):
         existing = read_json(self.wallet_path)
         if existing:
-            existing.setdefault("address", self.default_address)
-            existing.setdefault("balance", 0)
-            existing.setdefault("blocks_mined", 0)
-            existing.setdefault("total_rewards_claimed", existing.get("balance", 0))
-            existing.setdefault("created_at", time.strftime("%Y-%m-%d %H:%M:%S"))
-            existing.setdefault("last_updated", None)
-            self.logger.info(f"Wallet loaded: {existing['balance']:,} NPC | {existing['blocks_mined']} blocks | {existing['address'][:16]}...")
+            self.logger.info(f"Wallet loaded: {existing['balance']:,} NPC | {existing['blocks_mined']} blocks")
             return existing
         data = {"address": self.default_address or generate_address(),"balance": 0,"blocks_mined": 0,"total_rewards_claimed": 0,"created_at": time.strftime("%Y-%m-%d %H:%M:%S"),"last_updated": None}
-        atomic_write_json(self.wallet_path, data)
-        self.logger.info(f"New wallet created: {data['address'][:16]}...")
-        return data
-    def save(self):
-        self.data["last_updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        atomic_write_json(self.wallet_path, self.data)
+        atomic_write_json(self.wallet_path, data); return data
+    def save(self): atomic_write_json(self.wallet_path, self.data)
     def add_reward(self, amount):
-        self.data["balance"] += amount
-        self.data["blocks_mined"] += 1
-        self.data["total_rewards_claimed"] += amount
-        self.save()
-        return self.data["balance"]
+        self.data["balance"] += amount; self.data["blocks_mined"] += 1; self.data["total_rewards_claimed"] += amount; self.save(); return self.data["balance"]
     def get_balance(self): return self.data["balance"]
     def get_total_rewards(self): return self.data["total_rewards_claimed"]
-    def get_summary(self): return f"{self.data['balance']:,} NPC | {self.data['blocks_mined']} blocks | {self.data['address'][:16]}..."
+    def get_summary(self): return f"{self.data['balance']:,} NPC | {self.data['blocks_mined']} blocks"
 
 class Block:
     def __init__(self, index, previous_hash, timestamp, data, nonce=0, block_hash=None):
-        self.index = index
-        self.previous_hash = previous_hash
-        self.timestamp = timestamp
-        self.data = data
-        self.nonce = nonce
-        self.hash = block_hash or self.compute_hash()
+        self.index = index; self.previous_hash = previous_hash; self.timestamp = timestamp; self.data = data; self.nonce = nonce; self.hash = block_hash or self.compute_hash()
     def compute_hash(self):
         payload = {"index": self.index,"previous_hash": self.previous_hash,"timestamp": self.timestamp,"data": self.data,"nonce": self.nonce}
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
-    def to_dict(self):
-        return {"index": self.index,"previous_hash": self.previous_hash,"timestamp": self.timestamp,"data": self.data,"nonce": self.nonce,"hash": self.hash}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+    def to_dict(self): return {"index": self.index,"previous_hash": self.previous_hash,"timestamp": self.timestamp,"data": self.data,"nonce": self.nonce,"hash": self.hash}
     @staticmethod
-    def from_dict(data): return Block(data["index"], data["previous_hash"], data["timestamp"], data["data"], data["nonce"], data["hash"])
+    def from_dict(d): return Block(d["index"], d["previous_hash"], d["timestamp"], d["data"], d["nonce"], d["hash"])
 
 class ChainStorage:
-    def __init__(self, data_dir, logger):
-        self.state_file = data_dir / "chain_state.json"
-        self.logger = logger
-    def load(self):
-        state = read_json(self.state_file)
-        if state: self.logger.info(f"Chain state loaded: height={state.get('height', 0)} | difficulty={state.get('difficulty', '?')}")
-        return state
+    def __init__(self, data_dir, logger): self.state_file = data_dir / "chain_state.json"; self.logger = logger
+    def load(self): return read_json(self.state_file)
     def save(self, blockchain):
-        data = {"height": blockchain.height,"difficulty": blockchain.difficulty,"total_mined_coins": blockchain.total_mined_coins,"last_hash": blockchain.latest_block.hash,"last_saved": time.strftime("%Y-%m-%d %H:%M:%S"),"recent_blocks": [b.to_dict() for b in blockchain.recent_blocks[-MAX_RECENT_BLOCKS:]],"recent_block_times": blockchain.block_times[-DIFFICULTY_ADJUSTMENT_INTERVAL:]}
+        data = {"height": blockchain.height,"difficulty": blockchain.difficulty,"total_mined_coins": blockchain.total_mined_coins,"last_hash": blockchain.latest_block.hash,"recent_blocks": [b.to_dict() for b in blockchain.recent_blocks[-MAX_RECENT_BLOCKS:]],"recent_block_times": blockchain.block_times[-DIFFICULTY_ADJUSTMENT_INTERVAL:]}
         atomic_write_json(self.state_file, data)
 
-# WORKER chạy trên từng core - minh bạch phần cứng
 def _pow_worker(args):
     index, previous_hash, timestamp, data, start_nonce, step, difficulty = args
-    target_prefix = "0" * difficulty
-    nonce = start_nonce
-    hashes = 0
+    target_prefix = "0" * difficulty; nonce = start_nonce; hashes = 0
     while True:
         payload = {"index": index,"previous_hash": previous_hash,"timestamp": timestamp,"data": data,"nonce": nonce}
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        h = hashlib.sha256(encoded).hexdigest()
+        h = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
         hashes += 1
-        if h.startswith(target_prefix):
-            return (nonce, h, hashes)
+        if h.startswith(target_prefix): return (nonce, h, hashes)
         nonce += step
 
 class NPlusBlockchain:
     def __init__(self, config, logger, saved_state=None):
-        self.config = config
-        self.logger = logger
-        self.symbol = config.get("symbol", "NPC")
-        self.initial_reward = int(config.get("initial_block_reward", 50))
+        self.config = config; self.logger = logger; self.symbol = config.get("symbol", "NPC")
         self.total_supply_cap = int(config.get("total_supply_cap", 1_000_000_000))
-        self.difficulty = min(4, int(config.get("difficulty", 4)))
-        self.height = 0
-        self.total_mined_coins = 0
-        self.block_times = []
-        self.recent_blocks = []
-        self.cores = os.cpu_count() or 1
-        if saved_state and saved_state.get("recent_blocks"):
-            self._restore_from_state(saved_state)
-        else:
-            self._create_genesis_block()
-        if self.difficulty > 4: self.difficulty = 4
-
+        self.difficulty = min(4, int(config.get("difficulty", 4))); self.height = 0; self.total_mined_coins = 0
+        self.block_times = []; self.recent_blocks = []; self.cores = os.cpu_count() or 1
+        if saved_state and saved_state.get("recent_blocks"): self._restore_from_state(saved_state)
+        else: self._create_genesis_block()
     def _create_genesis_block(self):
-        genesis = Block(0, "0" * 64, time.time(), {"type": "genesis", "message": "NPlus genesis block"})
-        self.latest_block = genesis
-        self.height = 0
-        self.recent_blocks = [genesis]
-        self.logger.info(f"Genesis block created: {genesis.hash[:16]}... | Cores: {self.cores}")
-
+        genesis = Block(0, "0"*64, time.time(), {"type": "genesis"})
+        self.latest_block = genesis; self.height = 0; self.recent_blocks = [genesis]
     def _restore_from_state(self, state):
         try:
             blocks = [Block.from_dict(b) for b in state["recent_blocks"]]
-            self.recent_blocks = blocks[-MAX_RECENT_BLOCKS:]
-            self.latest_block = self.recent_blocks[-1]
-            self.height = int(state.get("height", self.latest_block.index))
-            self.difficulty = min(4, int(state.get("difficulty", self.difficulty)))
+            self.recent_blocks = blocks[-MAX_RECENT_BLOCKS:]; self.latest_block = self.recent_blocks[-1]
+            self.height = int(state.get("height", 0)); self.difficulty = min(4, int(state.get("difficulty", 4)))
             self.total_mined_coins = int(state.get("total_mined_coins", 0))
             self.block_times = state.get("recent_block_times", [])[-DIFFICULTY_ADJUSTMENT_INTERVAL:]
-            self.logger.info(f"Blockchain restored: height={self.height} | diff={self.difficulty} | cores={self.cores}")
-        except Exception as e:
-            self.logger.error(f"Failed to restore: {e}")
-            self._create_genesis_block()
-
+        except: self._create_genesis_block()
     def get_latest_block(self): return self.latest_block
-
-    def get_reward_for_next_block(self):
-        reward = self.initial_reward # FIX: luôn 50
+    def get_reward_from_hashes(self, hashes):
+        # CÔNG THỨC MINH BẠCH: Coin = Hash / 1300 + base
+        coins_from_work = hashes // HASHES_PER_NPC
+        reward = BASE_REWARD + coins_from_work
         remaining = self.total_supply_cap - self.total_mined_coins
         return max(0, min(reward, remaining))
-
     def proof_of_work(self, block, difficulty):
-        # MINH BẠCH PHẦN CỨNG: dùng hết số core
-        start_time = time.time()
-        num_workers = self.cores
-
-        # Tạo args cho mỗi core: core 0 thử nonce 0,4,8... core 1 thử 1,5,9...
+        start_time = time.time(); num_workers = self.cores
         worker_args = [(block.index, block.previous_hash, block.timestamp, block.data, i, num_workers, difficulty) for i in range(num_workers)]
-
         try:
             with multiprocessing.Pool(processes=num_workers) as pool:
-                # Lấy kết quả đầu tiên tìm được (nhanh nhất)
                 for result in pool.imap_unordered(_pow_worker, worker_args):
                     nonce, hash_result, hashes_per_worker = result
-                    # Tính tổng hash ước lượng
                     total_hashes = hashes_per_worker * num_workers
                     duration = time.time() - start_time
-                    block.nonce = nonce
-                    block.hash = hash_result
-                    self.block_times.append(duration)
-                    pool.terminate()
+                    block.nonce = nonce; block.hash = hash_result
+                    self.block_times.append(duration); pool.terminate()
                     return total_hashes, duration
-        except Exception:
-            # Fallback về 1 core nếu Colab không cho multi-process
-            target_prefix = "0" * difficulty
-            block.nonce = 0
-            computed_hash = block.compute_hash()
-            hashes = 1
-            s = time.time()
+        except:
+            target_prefix = "0" * difficulty; block.nonce = 0; computed_hash = block.compute_hash(); hashes = 1; s = time.time()
             while not computed_hash.startswith(target_prefix):
-                block.nonce += 1
-                computed_hash = block.compute_hash()
-                hashes += 1
-            duration = time.time() - s
-            block.hash = computed_hash
-            self.block_times.append(duration)
-            return hashes, duration
-
+                block.nonce += 1; computed_hash = block.compute_hash(); hashes += 1
+            duration = time.time() - s; block.hash = computed_hash; self.block_times.append(duration); return hashes, duration
     def add_block(self, block, difficulty_used):
-        latest = self.get_latest_block()
-        if block.previous_hash!= latest.hash: return False
+        if block.previous_hash!= self.get_latest_block().hash: return False
         if not block.hash.startswith("0" * difficulty_used): return False
-        self.latest_block = block
-        self.height = block.index
-        self.recent_blocks.append(block)
-        self.recent_blocks = self.recent_blocks[-MAX_RECENT_BLOCKS:]
-        self.adjust_difficulty()
-        return True
-
+        self.latest_block = block; self.height = block.index; self.recent_blocks.append(block)
+        self.recent_blocks = self.recent_blocks[-MAX_RECENT_BLOCKS:]; self.adjust_difficulty(); return True
     def adjust_difficulty(self):
         if len(self.block_times) < DIFFICULTY_ADJUSTMENT_INTERVAL: return
-        recent = self.block_times[-DIFFICULTY_ADJUSTMENT_INTERVAL:]
-        avg_time = sum(recent) / len(recent)
+        avg_time = sum(self.block_times[-DIFFICULTY_ADJUSTMENT_INTERVAL:]) / DIFFICULTY_ADJUSTMENT_INTERVAL
         old = self.difficulty
         if avg_time < TARGET_BLOCK_TIME * 0.5: self.difficulty = min(MAX_DIFFICULTY, self.difficulty + 1)
         elif avg_time > TARGET_BLOCK_TIME * 2.0: self.difficulty = max(MIN_DIFFICULTY, self.difficulty - 1)
         self.block_times.clear()
-        if self.difficulty!= old:
-            self.logger.info(f"Difficulty adjusted: {old} -> {self.difficulty} (avg: {avg_time:.2f}s | cores: {self.cores})")
-
-    def supply_reached(self): return self.total_mined_coins >= self.total_supply_cap
+        if self.difficulty!= old: self.logger.info(f"Diff {old} -> {self.difficulty} (avg {avg_time:.2f}s)")
 
 def run_continuous_miner():
-    logger = initialize_environment()
-    setup_project_files(logger)
-    config_path = ROOT_PATH / "config" / "network.json"
-    wallet_path = ROOT_PATH / "wallet" / "balance.json"
-    data_dir = ROOT_PATH / "data"
+    logger = initialize_environment(); setup_project_files(logger)
+    config_path = ROOT_PATH / "config" / "network.json"; wallet_path = ROOT_PATH / "wallet" / "balance.json"; data_dir = ROOT_PATH / "data"
     config = read_json(config_path, DEFAULT_CONFIG)
-    wallet = WalletManager(wallet_path, logger, default_address=config.get("miner_address") or generate_address())
-    storage = ChainStorage(data_dir, logger)
-    saved_state = storage.load()
+    wallet = WalletManager(wallet_path, logger, config.get("miner_address") or generate_address())
+    storage = ChainStorage(data_dir, logger); saved_state = storage.load()
     blockchain = NPlusBlockchain(config, logger, saved_state)
-    wallet_total = wallet.get_total_rewards()
-    if wallet_total > blockchain.total_mined_coins: blockchain.total_mined_coins = wallet_total
-
-    logger.info(f"Mining started | Diff: {blockchain.difficulty} | Reward: 50 fixed | Cores: {blockchain.cores} | Mode: HARDWARE PoW")
-    logger.info(f"Wallet: {wallet.get_summary()}")
-    logger.info("=" * 60)
-
-    session_blocks = 0
-    session_rewards = 0
-    total_hashes = 0
-    start_time = time.time()
-    last_report = start_time
-
+    if wallet.get_total_rewards() > blockchain.total_mined_coins: blockchain.total_mined_coins = wallet.get_total_rewards()
+    logger.info(f"START HARDWARE MINING | {HASHES_PER_NPC} hash = 1 NPC | Base {BASE_REWARD} NPC/block | Cores: {blockchain.cores}")
+    session_blocks = 0; total_hashes = 0; start_time = time.time()
     try:
         while True:
-            if blockchain.supply_reached(): break
-            reward = blockchain.get_reward_for_next_block()
-            if reward <= 0: break
-            latest = blockchain.get_latest_block()
-            next_index = blockchain.height + 1
-            difficulty_used = blockchain.difficulty
-            block_data = {"type": "mining_reward","height": next_index,"miner": wallet.data["address"],"reward": reward,"symbol": blockchain.symbol,"created_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+            latest = blockchain.get_latest_block(); next_index = blockchain.height + 1
+            block_data = {"type": "mining_reward","height": next_index,"miner": wallet.data["address"]}
             new_block = Block(next_index, latest.hash, time.time(), block_data)
-            hashes, duration = blockchain.proof_of_work(new_block, difficulty_used)
-            total_hashes += hashes
-            if blockchain.add_block(new_block, difficulty_used):
-                blockchain.total_mined_coins += reward
-                new_balance = wallet.add_reward(reward)
-                storage.save(blockchain)
-                session_blocks += 1
-                session_rewards += reward
-                block_rate = hashes / duration if duration > 0 else 0
-                per_core = block_rate / blockchain.cores if blockchain.cores else block_rate
-                logger.info(f"Block #{new_block.index} | diff={difficulty_used} | cores={blockchain.cores} | nonce={new_block.nonce:,} | +{reward} NPC | {block_rate:,.0f} H/s ({per_core:,.0f} H/s/core) | {new_block.hash[:16]}...")
-            now = time.time()
-            if now - last_report >= STATUS_REPORT_INTERVAL:
-                elapsed = now - start_time
-                avg_hashrate = total_hashes / elapsed if elapsed > 0 else 0
-                logger.info(f"Status | blocks={session_blocks} | avg={avg_hashrate:,.0f} H/s on {blockchain.cores} cores | balance={wallet.get_balance():,} | height={blockchain.height} | diff={blockchain.difficulty}")
-                last_report = now
+            hashes, duration = blockchain.proof_of_work(new_block, blockchain.difficulty)
+            reward = blockchain.get_reward_from_hashes(hashes) # TÍNH COIN TỪ HASH THẬT
+            if reward <= 0: break
+            if blockchain.add_block(new_block, blockchain.difficulty):
+                blockchain.total_mined_coins += reward; new_balance = wallet.add_reward(reward); storage.save(blockchain)
+                total_hashes += hashes; session_blocks += 1
+                rate = hashes / duration if duration>0 else 0
+                logger.info(f"Block #{new_block.index} | {hashes:,} hash -> {reward} NPC | {hashes//HASHES_PER_NPC} from work + {BASE_REWARD} base | {rate:,.0f} H/s | bal={new_balance:,} | {new_block.hash[:12]}...")
     finally:
-        wallet.save()
-        storage.save(blockchain)
-        logger.info(f"Final balance: {wallet.get_summary()}")
+        wallet.save(); storage.save(blockchain)
+        logger.info(f"Final: {wallet.get_summary()} | Total hashes: {total_hashes:,} = {total_hashes//HASHES_PER_NPC:,} NPC from work")
 
 if __name__ == "__main__":
     run_continuous_miner()
