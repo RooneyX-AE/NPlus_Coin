@@ -15,7 +15,7 @@ It mines **NPC (NPlus Coin)** — a cryptocurrency that:
 * ❌ Is not listed on Binance 
 * ❌ Is not listed on Coinbase 
 * ❌ Nobody buys or sells 
-* ❌ Real-world value: **0 VND** 
+* ❌ Real-world value: **0 $** 
 * ✅ But watching your balance go up feels **really damn good** 
  
 And most importantly: 
