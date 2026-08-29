@@ -50,9 +50,9 @@ Just a CPU.
  
 | Scenario              | Price per NPC |  Value of 10,090 NPC | 
 | --------------------- | ------------: | -------------------: | 
-| **Harsh reality**     |         0 VND |             0 VND 😭 | 
-| **A cup of iced tea** |       100 VND |     1,009,000 VND 🍵 | 
-| **Dream scenario**    |   315,000 VND | ~3.18 billion VND 🏠 | 
+| **Harsh reality**     |         0 $ |             0 $ 😭 | 
+| **A cup of iced tea** |       100 $ |     1,009,000 $ 🍵 | 
+| **Dream scenario**    |   315,000 $ | ~3.18 billion $ 🏠 | 
 | **Maximum delusion**  |         1 BTC |             ∞ USD 🌌 | 
  
 > 👉 Recommended strategy: **enjoy the number in your wallet before asking what it can actually buy.** 
