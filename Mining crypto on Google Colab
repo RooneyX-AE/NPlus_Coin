@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 # ============================================================
-# CẤU HÌNH
+# CẤU HÌNH - BALANCED FINAL
 # ============================================================
 
 FORCE_RESET = False
@@ -17,12 +17,11 @@ LOCAL_FALLBACK_PATH = Path("/content/NPlus_Coin_Local")
 STATUS_REPORT_INTERVAL = 30
 CHECKPOINT_LOG_INTERVAL = 20
 
-TARGET_BLOCK_TIME = 1.5
-DIFFICULTY_ADJUSTMENT_INTERVAL = 20
+TARGET_BLOCK_TIME = 1.2 # trước 1.5, giờ 1.2 cho giữ quanh diff 4
+DIFFICULTY_ADJUSTMENT_INTERVAL = 15 # trước 20, chỉnh nhạy hơn
 MIN_DIFFICULTY = 3
-MAX_DIFFICULTY = 6
+MAX_DIFFICULTY = 5 # trước 6, giờ max 5 thôi
 
-HALVING_INTERVAL = 100 # Giữ lại cho vui, nhưng không dùng nữa
 MAX_RECENT_BLOCKS = 100
 
 DEFAULT_CONFIG = {
@@ -157,12 +156,6 @@ contract NPlusCoin {
         contract_path.write_text(sol_content, encoding="utf-8")
         logger.info("Smart contract created.")
 
-    if not readme_path.exists():
-        readme_path.write_text(
-            "# NPlus Coin\n\nLocal blockchain simulation with proof-of-work mining, wallet persistence, reward tracking and difficulty adjustment.\n\nFixed reward - no halving. This project is for learning and experimentation. NPC is not a real tradable asset.\n",
-            encoding="utf-8"
-        )
-
 def generate_address():
     seed = f"NPlusMiner_{time.time()}_{hashlib.sha256(str(time.time()).encode()).hexdigest()}"
     return "0x" + hashlib.sha256(seed.encode()).hexdigest()[:40]
@@ -187,10 +180,7 @@ class WalletManager:
             existing.setdefault("total_rewards_claimed", existing.get("balance", 0))
             existing.setdefault("created_at", time.strftime("%Y-%m-%d %H:%M:%S"))
             existing.setdefault("last_updated", None)
-            self.logger.info(
-                f"Wallet loaded: {existing['balance']:,} NPC | "
-                f"{existing['blocks_mined']} blocks | {existing['address'][:16]}..."
-            )
+            self.logger.info(f"Wallet loaded: {existing['balance']:,} NPC | {existing['blocks_mined']} blocks | {existing['address'][:16]}...")
             return existing
         data = {
             "address": self.default_address or generate_address(),
@@ -222,11 +212,7 @@ class WalletManager:
         return self.data["total_rewards_claimed"]
 
     def get_summary(self):
-        return (
-            f"{self.data['balance']:,} NPC | "
-            f"{self.data['blocks_mined']} blocks | "
-            f"{self.data['address'][:16]}..."
-        )
+        return f"{self.data['balance']:,} NPC | {self.data['blocks_mined']} blocks | {self.data['address'][:16]}..."
 
 # ============================================================
 # BLOCK
@@ -264,14 +250,7 @@ class Block:
 
     @staticmethod
     def from_dict(data):
-        return Block(
-            index=data["index"],
-            previous_hash=data["previous_hash"],
-            timestamp=data["timestamp"],
-            data=data["data"],
-            nonce=data["nonce"],
-            block_hash=data["hash"]
-        )
+        return Block(data["index"], data["previous_hash"], data["timestamp"], data["data"], data["nonce"], data["hash"])
 
 # ============================================================
 # LƯU TRẠNG THÁI CHAIN
@@ -301,7 +280,7 @@ class ChainStorage:
         atomic_write_json(self.state_file, data)
 
 # ============================================================
-# BLOCKCHAIN - ĐÃ FIX
+# BLOCKCHAIN - FINAL FIX
 # ============================================================
 
 class NPlusBlockchain:
@@ -311,19 +290,20 @@ class NPlusBlockchain:
         self.symbol = config.get("symbol", "NPC")
         self.initial_reward = int(config.get("initial_block_reward", 50))
         self.total_supply_cap = int(config.get("total_supply_cap", 1_000_000_000))
-        self.difficulty = int(config.get("difficulty", 4))
+        self.difficulty = min(4, int(config.get("difficulty", 4)))
         self.height = 0
         self.total_mined_coins = 0
         self.block_times = []
         self.recent_blocks = []
-
         if saved_state and saved_state.get("recent_blocks"):
             self._restore_from_state(saved_state)
         else:
             self._create_genesis_block()
+        if self.difficulty > 4:
+            self.difficulty = 4
 
     def _create_genesis_block(self):
-        genesis = Block(index=0, previous_hash="0" * 64, timestamp=time.time(), data={"type": "genesis", "message": "NPlus genesis block"})
+        genesis = Block(0, "0" * 64, time.time(), {"type": "genesis", "message": "NPlus genesis block"})
         self.latest_block = genesis
         self.height = 0
         self.recent_blocks = [genesis]
@@ -335,7 +315,7 @@ class NPlusBlockchain:
             self.recent_blocks = blocks[-MAX_RECENT_BLOCKS:]
             self.latest_block = self.recent_blocks[-1]
             self.height = int(state.get("height", self.latest_block.index))
-            self.difficulty = int(state.get("difficulty", self.difficulty))
+            self.difficulty = min(4, int(state.get("difficulty", self.difficulty)))
             self.total_mined_coins = int(state.get("total_mined_coins", 0))
             self.block_times = state.get("recent_block_times", [])[-DIFFICULTY_ADJUSTMENT_INTERVAL:]
             self.logger.info(f"Blockchain restored: height={self.height} | latest={self.latest_block.hash[:16]}...")
@@ -347,9 +327,7 @@ class NPlusBlockchain:
         return self.latest_block
 
     def get_reward_for_next_block(self):
-        # === FIX CHÍNH Ở ĐÂY ===
-        # Trước: reward = 50 // (2 ** halvings) -> càng đào càng ít
-        # Sau: reward cố định = initial_reward
+        # FIX: luôn 50 NPC
         reward = self.initial_reward
         remaining_supply = self.total_supply_cap - self.total_mined_coins
         return max(0, min(reward, remaining_supply))
@@ -372,10 +350,8 @@ class NPlusBlockchain:
     def add_block(self, block, difficulty_used):
         latest = self.get_latest_block()
         if block.previous_hash!= latest.hash:
-            self.logger.error("Block rejected: previous hash mismatch.")
             return False
         if not block.hash.startswith("0" * difficulty_used):
-            self.logger.error("Block rejected: invalid proof of work.")
             return False
         self.latest_block = block
         self.height = block.index
@@ -412,22 +388,17 @@ def run_continuous_miner():
     wallet_path = ROOT_PATH / "wallet" / "balance.json"
     data_dir = ROOT_PATH / "data"
     config = read_json(config_path, DEFAULT_CONFIG)
-    wallet = WalletManager(wallet_path=wallet_path, logger=logger, default_address=config.get("miner_address") or generate_address())
+    wallet = WalletManager(wallet_path, logger, default_address=config.get("miner_address") or generate_address())
     storage = ChainStorage(data_dir, logger)
     saved_state = storage.load()
-    blockchain = NPlusBlockchain(config=config, logger=logger, saved_state=saved_state)
+    blockchain = NPlusBlockchain(config, logger, saved_state)
 
     wallet_total = wallet.get_total_rewards()
     if wallet_total > blockchain.total_mined_coins:
         blockchain.total_mined_coins = wallet_total
-        logger.warning("Wallet rewards are higher than chain state. Using wallet total as mined supply baseline.")
 
-    if wallet.data["blocks_mined"] > blockchain.height:
-        logger.warning(f"Wallet shows {wallet.data['blocks_mined']} mined blocks, but chain state height is {blockchain.height}. Mining will continue from saved chain height.")
-
-    logger.info(f"Continuous mining started | Coin: {config.get('coin_name', 'NPlus Coin')} ({blockchain.symbol}) | Height: {blockchain.height} | Difficulty: {blockchain.difficulty}")
+    logger.info(f"Continuous mining started | Coin: {config.get('coin_name')} ({blockchain.symbol}) | Height: {blockchain.height} | Difficulty: {blockchain.difficulty} | Reward: 50 NPC fixed")
     logger.info(f"Wallet: {wallet.get_summary()}")
-    logger.info(f"Supply cap: {blockchain.total_supply_cap:,} {blockchain.symbol}")
     logger.info("=" * 60)
 
     session_blocks = 0
@@ -439,11 +410,9 @@ def run_continuous_miner():
     try:
         while True:
             if blockchain.supply_reached():
-                logger.info("Supply cap reached. Mining stopped.")
                 break
             reward = blockchain.get_reward_for_next_block()
             if reward <= 0:
-                logger.info("No remaining reward available. Mining stopped.")
                 break
             latest = blockchain.get_latest_block()
             next_index = blockchain.height + 1
@@ -456,7 +425,7 @@ def run_continuous_miner():
                 "symbol": blockchain.symbol,
                 "created_at": time.strftime("%Y-%m-%d %H:%M:%S")
             }
-            new_block = Block(index=next_index, previous_hash=latest.hash, timestamp=time.time(), data=block_data)
+            new_block = Block(next_index, latest.hash, time.time(), block_data)
             hashes, duration = blockchain.proof_of_work(new_block, difficulty_used)
             total_hashes += hashes
             if blockchain.add_block(new_block, difficulty_used):
@@ -466,36 +435,17 @@ def run_continuous_miner():
                 session_blocks += 1
                 session_rewards += reward
                 block_rate = hashes / duration if duration > 0 else 0
-                logger.info(f"Block #{new_block.index} | diff={difficulty_used} | nonce={new_block.nonce:,} | +{reward} {blockchain.symbol} | balance={new_balance:,} {blockchain.symbol} | {block_rate:,.0f} H/s | {new_block.hash[:16]}...")
-                if session_blocks % CHECKPOINT_LOG_INTERVAL == 0:
-                    logger.info(f"Checkpoint saved | height={blockchain.height} | balance={wallet.get_balance():,} {blockchain.symbol}")
+                logger.info(f"Block #{new_block.index} | diff={difficulty_used} | nonce={new_block.nonce:,} | +{reward} {blockchain.symbol} | balance={new_balance:,} | {block_rate:,.0f} H/s | {new_block.hash[:16]}...")
             now = time.time()
             if now - last_report >= STATUS_REPORT_INTERVAL:
                 elapsed = now - start_time
                 avg_hashrate = total_hashes / elapsed if elapsed > 0 else 0
-                logger.info(f"Status | session_blocks={session_blocks} | session_rewards={session_rewards:,} {blockchain.symbol} | total_hashes={total_hashes:,} | avg_hashrate={avg_hashrate:,.0f} H/s | balance={wallet.get_balance():,} {blockchain.symbol} | height={blockchain.height} | difficulty={blockchain.difficulty}")
+                logger.info(f"Status | blocks={session_blocks} | rewards={session_rewards:,} | avg={avg_hashrate:,.0f} H/s | balance={wallet.get_balance():,} | height={blockchain.height} | diff={blockchain.difficulty}")
                 last_report = now
-    except KeyboardInterrupt:
-        logger.info("Mining stopped by user.")
-    except Exception as e:
-        logger.error(f"Mining error: {e}", exc_info=True)
     finally:
         wallet.save()
         storage.save(blockchain)
-        elapsed = time.time() - start_time
-        avg_hashrate = total_hashes / elapsed if elapsed > 0 else 0
-        logger.info("=" * 60)
-        logger.info("Session summary")
-        logger.info(f"Session blocks: {session_blocks}")
-        logger.info(f"Session rewards: {session_rewards:,} {blockchain.symbol}")
         logger.info(f"Final balance: {wallet.get_summary()}")
-        logger.info(f"Chain height: {blockchain.height}")
-        logger.info(f"Current difficulty: {blockchain.difficulty}")
-        logger.info(f"Total hashes: {total_hashes:,}")
-        logger.info(f"Average hashrate: {avg_hashrate:,.2f} H/s")
-        logger.info(f"Wallet file: {wallet_path}")
-        logger.info(f"Chain state file: {data_dir / 'chain_state.json'}")
-        logger.info("=" * 60)
 
 if __name__ == "__main__":
     run_continuous_miner()
