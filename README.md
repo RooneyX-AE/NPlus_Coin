@@ -1,4 +1,4 @@
-# 💰 NPlus Coin Miner — The Road to Becoming a Virtual Billionaire 🚀
+# 💰 NPlus Coin Miner — The Road to Becoming Rich 🚀
 
 > *"I don't need Bitcoin. I have NPC."* — Someone running this script at 3 AM.
 
@@ -32,7 +32,7 @@ A **completely legal money printer** (in your imagination) written in **pure Pyt
 
 ---
 
-## 🚀 How to Become a Billionaire in 3 Steps
+## 🚀 How to Get Started in 3 Steps
 
 ### Step 1: Clone the repo
 
@@ -41,7 +41,7 @@ git clone https://github.com/RooneyX-AE/NPlus_Coin.git
 cd NPlus_Coin
 ```
 
-### Step 2: Start the money printer
+### Step 2: Start mining
 
 ```bash
 python3 nplus_miner.py
@@ -50,9 +50,9 @@ python3 nplus_miner.py
 ### Step 3: Sit back and watch your balance grow
 
 ```text
-✅ Block #364 | +6 NPC | balance=10,096 NPC
-✅ Block #365 | +6 NPC | balance=10,102 NPC
-✅ Block #366 | +6 NPC | balance=10,108 NPC
+Block #364 | +6 NPC | balance=10,096 NPC
+Block #365 | +6 NPC | balance=10,102 NPC
+Block #366 | +6 NPC | balance=10,108 NPC
 ...
 ```
 
@@ -62,18 +62,18 @@ python3 nplus_miner.py
 
 **After 1 month:** You own 4% of the global money supply (your own personal global economy, obviously).
 
-🎉 **Congratulations! You're rich!** (Rich in imagination.)
+🎉 **Congratulations! Your NPC balance is growing!**
 
 ---
 
-## 💸 Valuing Your Fortune
+## 💸 Valuing Your NPC
 
 | Scenario | Price of 1 NPC | Value of 10,090 NPC |
 |----------|----------------|---------------------|
 | **Harsh reality** | 0 VND | 0 VND 😭 |
 | **Street iced tea** | 100 VND | 1,009,000 VND 🍵 |
 | **Full-on fantasy** | 315,000 VND | 3.17 billion VND 🏠 |
-| **Maximum delusion** | 1 BTC | ∞ USD 🌌 |
+| **Maximum imagination** | 1 BTC | ∞ USD 🌌 |
 
 > 👉 The **"street iced tea"** scenario is recommended for maintaining emotional stability.
 
@@ -90,13 +90,13 @@ nplus_data/
 └── contracts/NPlusCoin.sol   ← "ERC-20 standard" smart contract (nobody deploys it)
 ```
 
-> 💡 The `nplus_data/` directory is included in `.gitignore` — your billion-dollar fortune is **completely safe** from the prying eyes of the open-source community.
+> 💡 The `nplus_data/` directory is included in `.gitignore` — your billion-dollar simulated fortune is safe from the prying eyes of the open-source community.
 
 ---
 
 ## ⚙️ The "Nobel Prize Worthy" Economics
 
-The halving mechanism triggers every 100 blocks (just like Bitcoin, but much faster):
+The halving mechanism triggers every 100 blocks (similar to Bitcoin, but much faster):
 
 | Block | Reward | Your emotional state |
 |-------|--------|----------------------|
@@ -109,7 +109,7 @@ The halving mechanism triggers every 100 blocks (just like Bitcoin, but much fas
 
 ---
 
-## 🖥️ Actual Output From a "Billionaire"
+## 🖥️ Actual Mining Output
 
 ```text
 2026-08-29 02:41:38 [INFO] NPLUS COIN MINER - STANDALONE EDITION
@@ -129,7 +129,7 @@ Look at that `balance=10,096` line... **it feels better than winning the lottery
 
 - ✅ CS/IT students who want to understand how blockchain works
 - ✅ Bored developers who want to code something "useless but fun"
-- ✅ People who want to experience the feeling of being rich without actual money
+- ✅ People who want to experience watching a simulated balance grow without spending real money
 - ✅ Anyone with 60 hours of Colab quota and no idea what to do with it
 - ❌ Serious investors looking for real returns (sorry, wrong place)
 
@@ -141,7 +141,7 @@ Jokes aside, behind this virtual money printer are some genuinely useful blockch
 
 - 🔗 Block and chain structure (previous-hash linking)
 - 🔐 SHA-256 hashing and proof-of-work
-- 💾 Atomic file writes (to avoid data corruption)
+- 💾 Atomic file writes to reduce the risk of data corruption
 - 📊 Tokenomics: halving, supply cap, and difficulty adjustment
 - 🛡️ Graceful shutdown and signal handling
 - 📝 Professional logging and state persistence
@@ -155,21 +155,21 @@ Jokes aside, behind this virtual money printer are some genuinely useful blockch
 1. **NPC is not real money.** Do not spend real money buying NPC from anyone. That would be a scam.
 2. **Colab free tier has limits.** Don't abuse GPU resources or Google may kick you out.
 3. **This code is for learning only.** Do not use it as the foundation of a production blockchain.
-4. **If you genuinely believe NPC has real-world value...** please reconsider your life choices. 🏥
+4. **If you genuinely believe NPC has real-world value...** please reconsider your assumptions before making financial decisions. 🏥
 
 ---
 
 ## 📜 License
 
-**MIT License** — Do whatever you want with it, including forking it and renaming it "SuperRich Coin" to prank your friends. Just don't blame me when they discover the truth. 😅
+**MIT License** — Do whatever you want with it, including forking it and renaming it "SuperRich Coin" to prank your friends. Just don't blame the original project when reality catches up. 😅
 
 See the details in [LICENSE](LICENSE).
 
 ---
 
-## 🏆 Hall of Fame — Notable "NPC Billionaires"
+## 🏆 Hall of Fame — Notable NPC Holders
 
-| Billionaire | Balance | Mining Time | Status |
+| Holder | Balance | Mining Time | Status |
 |--------|--------|--------|--------|
 | **RooneyX-AE** (author) | 10,090 NPC | 9 minutes | Dreaming about buying a private island 🏝️ |
 | **You (soon)** | ??? NPC | ??? | About to join the club 💎 |
@@ -178,7 +178,7 @@ See the details in [LICENSE](LICENSE).
 
 <div align="center">
 
-### 🎪 Built with ☕, pure Python, and delusions of grandeur
+### 🎪 Built with ☕, pure Python, and unreasonable ambition
 
 **If this repo made you laugh at least once, give it a ⭐**
 
