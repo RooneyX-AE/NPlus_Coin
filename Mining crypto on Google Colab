@@ -1,0 +1,661 @@
+import time
+import json
+import shutil
+import hashlib
+import logging
+from pathlib import Path
+
+# ============================================================
+# CẤU HÌNH
+# ============================================================
+
+FORCE_RESET = False
+
+ROOT_PATH = Path("/content/drive/MyDrive/NPlus_Coin")
+LOCAL_FALLBACK_PATH = Path("/content/NPlus_Coin_Local")
+
+STATUS_REPORT_INTERVAL = 30
+CHECKPOINT_LOG_INTERVAL = 20
+
+TARGET_BLOCK_TIME = 1.5
+DIFFICULTY_ADJUSTMENT_INTERVAL = 20
+MIN_DIFFICULTY = 3
+MAX_DIFFICULTY = 6
+
+HALVING_INTERVAL = 100
+MAX_RECENT_BLOCKS = 100
+
+DEFAULT_CONFIG = {
+    "network": "NPlus Mainnet",
+    "chain_id": 8888,
+    "symbol": "NPC",
+    "coin_name": "NPlus Coin",
+    "difficulty": 4,
+    "initial_block_reward": 50,
+    "total_supply_cap": 1_000_000_000,
+    "miner_address": None
+}
+
+# ============================================================
+# HỆ THỐNG FILE
+# ============================================================
+
+def atomic_write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(path.name + ".tmp")
+
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+    tmp_path.replace(path)
+
+
+def read_json(path, default=None):
+    try:
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        return default
+    return default
+
+
+# ============================================================
+# KHỞI TẠO MÔI TRƯỜNG
+# ============================================================
+
+def initialize_environment():
+    global ROOT_PATH
+
+    try:
+        from google.colab import drive
+
+        drive_root = Path("/content/drive")
+        my_drive = drive_root / "MyDrive"
+
+        if not my_drive.exists():
+            print("Connecting to Google Drive...", flush=True)
+            drive.mount("/content/drive")
+        else:
+            print("Google Drive already mounted.", flush=True)
+
+    except ImportError:
+        ROOT_PATH = LOCAL_FALLBACK_PATH
+        print("Not running in Colab. Using local path.", flush=True)
+
+    except Exception as e:
+        ROOT_PATH = LOCAL_FALLBACK_PATH
+        print(f"Drive mount failed: {e}. Using local path.", flush=True)
+
+    if FORCE_RESET and ROOT_PATH.exists():
+        shutil.rmtree(ROOT_PATH)
+        print("FORCE_RESET=True, old data removed.", flush=True)
+
+    for folder in ["contracts", "config", "logs", "wallet", "data", "src"]:
+        (ROOT_PATH / folder).mkdir(parents=True, exist_ok=True)
+
+    log_file = ROOT_PATH / "logs" / "miner.log"
+
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        root_logger.handlers.clear()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[
+            logging.FileHandler(log_file, mode="a", encoding="utf-8"),
+            logging.StreamHandler()
+        ]
+    )
+
+    logger = logging.getLogger("NPlusMiner")
+    logger.info(f"Environment ready at: {ROOT_PATH}")
+    return logger
+
+
+# ============================================================
+# FILE DỰ ÁN
+# ============================================================
+
+def setup_project_files(logger):
+    config_path = ROOT_PATH / "config" / "network.json"
+    contract_path = ROOT_PATH / "contracts" / "NPlusCoin.sol"
+    readme_path = ROOT_PATH / "README.md"
+
+    if not config_path.exists():
+        config = dict(DEFAULT_CONFIG)
+        config["miner_address"] = generate_address()
+        atomic_write_json(config_path, config)
+        logger.info("Network config created.")
+    else:
+        config = read_json(config_path, DEFAULT_CONFIG)
+        changed = False
+
+        for k, v in DEFAULT_CONFIG.items():
+            if k not in config:
+                config[k] = v
+                changed = True
+
+        if not config.get("miner_address"):
+            config["miner_address"] = generate_address()
+            changed = True
+
+        if changed:
+            atomic_write_json(config_path, config)
+
+        logger.info("Network config loaded.")
+
+    if not contract_path.exists():
+        sol_content = """// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract NPlusCoin {
+    string public name = "NPlus Coin";
+    string public symbol = "NPC";
+    uint256 public totalSupply = 1000000000 * 10**18;
+
+    mapping(address => uint256) public balanceOf;
+
+    event Transfer(address indexed from, address indexed to, uint256 amount);
+
+    constructor() {
+        balanceOf[msg.sender] = totalSupply;
+        emit Transfer(address(0), msg.sender, totalSupply);
+    }
+
+    function transfer(address to, uint256 amount) public returns (bool) {
+        require(to != address(0), "Invalid recipient");
+        require(balanceOf[msg.sender] >= amount, "Insufficient balance");
+
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+
+        emit Transfer(msg.sender, to, amount);
+        return true;
+    }
+}
+"""
+        contract_path.write_text(sol_content, encoding="utf-8")
+        logger.info("Smart contract created.")
+
+    if not readme_path.exists():
+        readme_path.write_text(
+            """# NPlus Coin
+
+Local blockchain simulation with proof-of-work mining, wallet persistence, reward tracking, halving and difficulty adjustment.
+
+This project is for learning and experimentation. NPC is not a real tradable asset.
+""",
+            encoding="utf-8"
+        )
+
+
+def generate_address():
+    seed = f"NPlusMiner_{time.time()}_{hashlib.sha256(str(time.time()).encode()).hexdigest()}"
+    return "0x" + hashlib.sha256(seed.encode()).hexdigest()[:40]
+
+
+# ============================================================
+# WALLET
+# ============================================================
+
+class WalletManager:
+    def __init__(self, wallet_path, logger, default_address):
+        self.wallet_path = wallet_path
+        self.logger = logger
+        self.default_address = default_address
+        self.data = self._load_or_create()
+
+    def _load_or_create(self):
+        existing = read_json(self.wallet_path)
+
+        if existing:
+            existing.setdefault("address", self.default_address)
+            existing.setdefault("balance", 0)
+            existing.setdefault("blocks_mined", 0)
+            existing.setdefault("total_rewards_claimed", existing.get("balance", 0))
+            existing.setdefault("created_at", time.strftime("%Y-%m-%d %H:%M:%S"))
+            existing.setdefault("last_updated", None)
+
+            self.logger.info(
+                f"Wallet loaded: {existing['balance']:,} NPC | "
+                f"{existing['blocks_mined']} blocks | {existing['address'][:16]}..."
+            )
+            return existing
+
+        data = {
+            "address": self.default_address or generate_address(),
+            "balance": 0,
+            "blocks_mined": 0,
+            "total_rewards_claimed": 0,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "last_updated": None
+        }
+
+        atomic_write_json(self.wallet_path, data)
+        self.logger.info(f"New wallet created: {data['address'][:16]}...")
+        return data
+
+    def save(self):
+        self.data["last_updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        atomic_write_json(self.wallet_path, self.data)
+
+    def add_reward(self, amount):
+        self.data["balance"] += amount
+        self.data["blocks_mined"] += 1
+        self.data["total_rewards_claimed"] += amount
+        self.save()
+        return self.data["balance"]
+
+    def get_balance(self):
+        return self.data["balance"]
+
+    def get_total_rewards(self):
+        return self.data["total_rewards_claimed"]
+
+    def get_summary(self):
+        return (
+            f"{self.data['balance']:,} NPC | "
+            f"{self.data['blocks_mined']} blocks | "
+            f"{self.data['address'][:16]}..."
+        )
+
+
+# ============================================================
+# BLOCK
+# ============================================================
+
+class Block:
+    def __init__(self, index, previous_hash, timestamp, data, nonce=0, block_hash=None):
+        self.index = index
+        self.previous_hash = previous_hash
+        self.timestamp = timestamp
+        self.data = data
+        self.nonce = nonce
+        self.hash = block_hash or self.compute_hash()
+
+    def compute_hash(self):
+        payload = {
+            "index": self.index,
+            "previous_hash": self.previous_hash,
+            "timestamp": self.timestamp,
+            "data": self.data,
+            "nonce": self.nonce
+        }
+
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False
+        ).encode("utf-8")
+
+        return hashlib.sha256(encoded).hexdigest()
+
+    def to_dict(self):
+        return {
+            "index": self.index,
+            "previous_hash": self.previous_hash,
+            "timestamp": self.timestamp,
+            "data": self.data,
+            "nonce": self.nonce,
+            "hash": self.hash
+        }
+
+    @staticmethod
+    def from_dict(data):
+        return Block(
+            index=data["index"],
+            previous_hash=data["previous_hash"],
+            timestamp=data["timestamp"],
+            data=data["data"],
+            nonce=data["nonce"],
+            block_hash=data["hash"]
+        )
+
+
+# ============================================================
+# LƯU TRẠNG THÁI CHAIN
+# ============================================================
+
+class ChainStorage:
+    def __init__(self, data_dir, logger):
+        self.state_file = data_dir / "chain_state.json"
+        self.logger = logger
+
+    def load(self):
+        state = read_json(self.state_file)
+        if state:
+            self.logger.info(
+                f"Chain state loaded: height={state.get('height', 0)} | "
+                f"difficulty={state.get('difficulty', '?')}"
+            )
+        return state
+
+    def save(self, blockchain):
+        data = {
+            "height": blockchain.height,
+            "difficulty": blockchain.difficulty,
+            "total_mined_coins": blockchain.total_mined_coins,
+            "last_hash": blockchain.latest_block.hash,
+            "last_saved": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "recent_blocks": [b.to_dict() for b in blockchain.recent_blocks[-MAX_RECENT_BLOCKS:]],
+            "recent_block_times": blockchain.block_times[-DIFFICULTY_ADJUSTMENT_INTERVAL:]
+        }
+
+        atomic_write_json(self.state_file, data)
+
+
+# ============================================================
+# BLOCKCHAIN
+# ============================================================
+
+class NPlusBlockchain:
+    def __init__(self, config, logger, saved_state=None):
+        self.config = config
+        self.logger = logger
+
+        self.symbol = config.get("symbol", "NPC")
+        self.initial_reward = int(config.get("initial_block_reward", 50))
+        self.total_supply_cap = int(config.get("total_supply_cap", 1_000_000_000))
+
+        self.difficulty = int(config.get("difficulty", 4))
+        self.height = 0
+        self.total_mined_coins = 0
+        self.block_times = []
+        self.recent_blocks = []
+
+        if saved_state and saved_state.get("recent_blocks"):
+            self._restore_from_state(saved_state)
+        else:
+            self._create_genesis_block()
+
+    def _create_genesis_block(self):
+        genesis = Block(
+            index=0,
+            previous_hash="0" * 64,
+            timestamp=time.time(),
+            data={
+                "type": "genesis",
+                "message": "NPlus genesis block"
+            }
+        )
+
+        self.latest_block = genesis
+        self.height = 0
+        self.recent_blocks = [genesis]
+        self.logger.info(f"Genesis block created: {genesis.hash[:16]}...")
+
+    def _restore_from_state(self, state):
+        try:
+            blocks = [Block.from_dict(b) for b in state["recent_blocks"]]
+            self.recent_blocks = blocks[-MAX_RECENT_BLOCKS:]
+            self.latest_block = self.recent_blocks[-1]
+            self.height = int(state.get("height", self.latest_block.index))
+            self.difficulty = int(state.get("difficulty", self.difficulty))
+            self.total_mined_coins = int(state.get("total_mined_coins", 0))
+            self.block_times = state.get("recent_block_times", [])[-DIFFICULTY_ADJUSTMENT_INTERVAL:]
+
+            self.logger.info(
+                f"Blockchain restored: height={self.height} | "
+                f"latest={self.latest_block.hash[:16]}..."
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to restore chain state: {e}")
+            self._create_genesis_block()
+
+    def get_latest_block(self):
+        return self.latest_block
+
+    def get_reward_for_next_block(self):
+        next_height = self.height + 1
+        halvings = (next_height - 1) // HALVING_INTERVAL
+
+        reward = self.initial_reward // (2 ** halvings)
+        reward = max(reward, 1)
+
+        remaining_supply = self.total_supply_cap - self.total_mined_coins
+        return max(0, min(reward, remaining_supply))
+
+    def proof_of_work(self, block, difficulty):
+        target_prefix = "0" * difficulty
+
+        block.nonce = 0
+        computed_hash = block.compute_hash()
+        hashes = 1
+
+        start = time.time()
+
+        while not computed_hash.startswith(target_prefix):
+            block.nonce += 1
+            computed_hash = block.compute_hash()
+            hashes += 1
+
+        duration = time.time() - start
+
+        block.hash = computed_hash
+        self.block_times.append(duration)
+
+        return hashes, duration
+
+    def add_block(self, block, difficulty_used):
+        latest = self.get_latest_block()
+
+        if block.previous_hash != latest.hash:
+            self.logger.error("Block rejected: previous hash mismatch.")
+            return False
+
+        if not block.hash.startswith("0" * difficulty_used):
+            self.logger.error("Block rejected: invalid proof of work.")
+            return False
+
+        self.latest_block = block
+        self.height = block.index
+        self.recent_blocks.append(block)
+        self.recent_blocks = self.recent_blocks[-MAX_RECENT_BLOCKS:]
+
+        self.adjust_difficulty()
+        return True
+
+    def adjust_difficulty(self):
+        if len(self.block_times) < DIFFICULTY_ADJUSTMENT_INTERVAL:
+            return
+
+        recent = self.block_times[-DIFFICULTY_ADJUSTMENT_INTERVAL:]
+        avg_time = sum(recent) / len(recent)
+
+        old = self.difficulty
+
+        if avg_time < TARGET_BLOCK_TIME * 0.5:
+            self.difficulty = min(MAX_DIFFICULTY, self.difficulty + 1)
+        elif avg_time > TARGET_BLOCK_TIME * 2.0:
+            self.difficulty = max(MIN_DIFFICULTY, self.difficulty - 1)
+
+        self.block_times.clear()
+
+        if self.difficulty != old:
+            self.logger.info(
+                f"Difficulty adjusted: {old} -> {self.difficulty} "
+                f"(avg block time: {avg_time:.2f}s)"
+            )
+
+    def supply_reached(self):
+        return self.total_mined_coins >= self.total_supply_cap
+
+
+# ============================================================
+# MINER
+# ============================================================
+
+def run_continuous_miner():
+    logger = initialize_environment()
+    setup_project_files(logger)
+
+    config_path = ROOT_PATH / "config" / "network.json"
+    wallet_path = ROOT_PATH / "wallet" / "balance.json"
+    data_dir = ROOT_PATH / "data"
+
+    config = read_json(config_path, DEFAULT_CONFIG)
+
+    wallet = WalletManager(
+        wallet_path=wallet_path,
+        logger=logger,
+        default_address=config.get("miner_address") or generate_address()
+    )
+
+    storage = ChainStorage(data_dir, logger)
+    saved_state = storage.load()
+
+    blockchain = NPlusBlockchain(
+        config=config,
+        logger=logger,
+        saved_state=saved_state
+    )
+
+    # Đồng bộ total mined với wallet nếu wallet lớn hơn state
+    wallet_total = wallet.get_total_rewards()
+    if wallet_total > blockchain.total_mined_coins:
+        blockchain.total_mined_coins = wallet_total
+        logger.warning(
+            "Wallet rewards are higher than chain state. "
+            "Using wallet total as mined supply baseline."
+        )
+
+    if wallet.data["blocks_mined"] > blockchain.height:
+        logger.warning(
+            f"Wallet shows {wallet.data['blocks_mined']} mined blocks, "
+            f"but chain state height is {blockchain.height}. "
+            "Mining will continue from saved chain height."
+        )
+
+    logger.info(
+        f"Continuous mining started | "
+        f"Coin: {config.get('coin_name', 'NPlus Coin')} ({blockchain.symbol}) | "
+        f"Height: {blockchain.height} | "
+        f"Difficulty: {blockchain.difficulty}"
+    )
+    logger.info(f"Wallet: {wallet.get_summary()}")
+    logger.info(f"Supply cap: {blockchain.total_supply_cap:,} {blockchain.symbol}")
+    logger.info("=" * 60)
+
+    session_blocks = 0
+    session_rewards = 0
+    total_hashes = 0
+    start_time = time.time()
+    last_report = start_time
+
+    try:
+        while True:
+            if blockchain.supply_reached():
+                logger.info("Supply cap reached. Mining stopped.")
+                break
+
+            reward = blockchain.get_reward_for_next_block()
+
+            if reward <= 0:
+                logger.info("No remaining reward available. Mining stopped.")
+                break
+
+            latest = blockchain.get_latest_block()
+            next_index = blockchain.height + 1
+            difficulty_used = blockchain.difficulty
+
+            block_data = {
+                "type": "mining_reward",
+                "height": next_index,
+                "miner": wallet.data["address"],
+                "reward": reward,
+                "symbol": blockchain.symbol,
+                "created_at": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+
+            new_block = Block(
+                index=next_index,
+                previous_hash=latest.hash,
+                timestamp=time.time(),
+                data=block_data
+            )
+
+            hashes, duration = blockchain.proof_of_work(new_block, difficulty_used)
+            total_hashes += hashes
+
+            if blockchain.add_block(new_block, difficulty_used):
+                blockchain.total_mined_coins += reward
+                new_balance = wallet.add_reward(reward)
+                storage.save(blockchain)
+
+                session_blocks += 1
+                session_rewards += reward
+
+                block_rate = hashes / duration if duration > 0 else 0
+
+                logger.info(
+                    f"Block #{new_block.index} | "
+                    f"diff={difficulty_used} | "
+                    f"nonce={new_block.nonce:,} | "
+                    f"+{reward} {blockchain.symbol} | "
+                    f"balance={new_balance:,} {blockchain.symbol} | "
+                    f"{block_rate:,.0f} H/s | "
+                    f"{new_block.hash[:16]}..."
+                )
+
+                if session_blocks % CHECKPOINT_LOG_INTERVAL == 0:
+                    logger.info(
+                        f"Checkpoint saved | "
+                        f"height={blockchain.height} | "
+                        f"balance={wallet.get_balance():,} {blockchain.symbol}"
+                    )
+
+            now = time.time()
+            if now - last_report >= STATUS_REPORT_INTERVAL:
+                elapsed = now - start_time
+                avg_hashrate = total_hashes / elapsed if elapsed > 0 else 0
+
+                logger.info(
+                    f"Status | "
+                    f"session_blocks={session_blocks} | "
+                    f"session_rewards={session_rewards:,} {blockchain.symbol} | "
+                    f"total_hashes={total_hashes:,} | "
+                    f"avg_hashrate={avg_hashrate:,.0f} H/s | "
+                    f"balance={wallet.get_balance():,} {blockchain.symbol} | "
+                    f"height={blockchain.height} | "
+                    f"difficulty={blockchain.difficulty}"
+                )
+
+                last_report = now
+
+    except KeyboardInterrupt:
+        logger.info("Mining stopped by user.")
+
+    except Exception as e:
+        logger.error(f"Mining error: {e}", exc_info=True)
+
+    finally:
+        wallet.save()
+        storage.save(blockchain)
+
+        elapsed = time.time() - start_time
+        avg_hashrate = total_hashes / elapsed if elapsed > 0 else 0
+
+        logger.info("=" * 60)
+        logger.info("Session summary")
+        logger.info(f"Session blocks: {session_blocks}")
+        logger.info(f"Session rewards: {session_rewards:,} {blockchain.symbol}")
+        logger.info(f"Final balance: {wallet.get_summary()}")
+        logger.info(f"Chain height: {blockchain.height}")
+        logger.info(f"Current difficulty: {blockchain.difficulty}")
+        logger.info(f"Total hashes: {total_hashes:,}")
+        logger.info(f"Average hashrate: {avg_hashrate:,.2f} H/s")
+        logger.info(f"Wallet file: {wallet_path}")
+        logger.info(f"Chain state file: {data_dir / 'chain_state.json'}")
+        logger.info("=" * 60)
+
+
+# ============================================================
+# START
+# ============================================================
+
+if __name__ == "__main__":
+    run_continuous_miner()
